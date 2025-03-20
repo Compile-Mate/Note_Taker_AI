@@ -14,7 +14,8 @@ The app is live and functional on Streamlit Cloud:
 - **SOAP Note Generation:** Creates structured SOAP notes with an editable interface and PDF export.
 - **Multi-Language Support:** Supports English, Spanish, and French transcripts using `googletrans`.
 - **Audio Transcription:** Supports local audio input using `speechrecognition` (not available on Streamlit Cloud).
-- **Advanced UI:** Modern design with light/dark themes, progress bars, collapsible sections, and interactive charts.
+- **Advanced UI  
+![Entire UI](https://github.com/Compile-Mate/Note_Taker_AI/blob/main/Images/entire_UI.jpg):** Modern design with light/dark themes, progress bars, collapsible sections, and interactive charts.
 - **Transcript History:** Stores and allows reprocessing of previous transcripts.
 - **Export Options:** Export medical summary, sentiment analysis, and SOAP note as JSON, CSV, PDF, or a ZIP file.
 
@@ -62,13 +63,16 @@ The app is live and functional on Streamlit Cloud:
 ---
 
 ## 📸 Sample Output Screenshots
-### 📌 Transcript Input
+### 📌 Transcript Input  
+![Transcript Input](https://github.com/Compile-Mate/Note_Taker_AI/blob/main/Images/Input_Transcript.jpg)
 The "Transcript Input" tab allows users to enter or load a sample physician-patient conversation. Pressing Enter processes the transcript immediately.
 
-### 📊 Analysis Results
+### 📊 Analysis Results  
+![Analysis Results](https://github.com/Compile-Mate/Note_Taker_AI/blob/main/Images/analysis_result.jpg)
 The "Analysis Results" tab displays the extracted medical summary, sentiment and intent analysis, distribution charts, and confidence scores for each analysis.
 
-### 📝 SOAP Note Editor
+### 📝 SOAP Note Editor  
+![SOAP Note Editor](https://github.com/Compile-Mate/Note_Taker_AI/blob/main/Images/Soap_note_editor.jpg)
 The "SOAP Note Editor" tab provides an editable interface for the generated SOAP note, with a preview mode and PDF export option.
 
 ---
