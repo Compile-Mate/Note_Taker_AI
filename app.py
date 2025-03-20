@@ -1,6 +1,4 @@
 import streamlit as st
-import spacy
-from transformers import pipeline
 import json
 import pandas as pd
 import plotly.express as px
@@ -11,27 +9,37 @@ import speech_recognition as sr
 from googletrans import Translator
 from io import BytesIO
 
-# Load SpaCy model (assumes it's pre-installed)
+# Load SpaCy with error handling
 try:
+    import spacy
     nlp = spacy.load("en_core_web_sm")
-except OSError:
-    st.error("SpaCy model 'en_core_web_sm' is missing. Please ensure it's installed in the environment.")
+except ImportError as e:
+    st.error(f"Failed to import SpaCy: {e}. Please check the environment and dependencies.")
+    nlp = None
+except OSError as e:
+    st.error(f"SpaCy model 'en_core_web_sm' is missing: {e}. Please ensure it's installed in the environment.")
     nlp = None
 
-# Load lightweight transformer models
-sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-intent_analyzer = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
+# Load transformer models
+try:
+    from transformers import pipeline
+    sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+    intent_analyzer = pipeline("zero-shot-classification", model="distilbert-base-uncased")
+except ImportError as e:
+    st.error(f"Failed to import transformers: {e}. Sentiment and intent analysis will be disabled.")
+    sentiment_analyzer = intent_analyzer = None
+
 translator = Translator()
 recognizer = sr.Recognizer()
 
-# Fallback NER without BioBERT (using SpaCy only)
+# Fallback NER without SpaCy
 def extract_entities(transcript):
     if nlp is None:
         return {"Symptoms": ["Neck pain", "Back pain"], "Treatments": ["Physiotherapy"], "Diagnosis": ["Whiplash"]}
     doc = nlp(transcript)
     entities = {"Symptoms": [], "Treatments": [], "Diagnosis": []}
     for ent in doc.ents:
-        if ent.label_ in ["DISEASE", "PROBLEM", "SYMPTOM"] or "pain" in ent.text.lower():
+        if "pain" in ent.text.lower() or ent.label_ in ["DISEASE", "PROBLEM", "SYMPTOM"]:
             entities["Symptoms"].append(ent.text)
         elif ent.label_ in ["TREATMENT", "MEDICINE"]:
             entities["Treatments"].append(ent.text)
@@ -65,6 +73,9 @@ def extract_medical_details(transcript):
 
 # Sentiment & Intent Analysis
 def analyze_sentiment_intent(transcript):
+    if sentiment_analyzer is None or intent_analyzer is None:
+        return [{"Text": "Sentiment analysis disabled", "Sentiment": "N/A", "Sentiment_Score": 0.0, "Intent": "N/A", "Intent_Score": 0.0}]
+    
     patient_lines = [line.split(":")[1].strip() for line in transcript.split("\n") if "Patient:" in line]
     results = []
     for line in patient_lines:
