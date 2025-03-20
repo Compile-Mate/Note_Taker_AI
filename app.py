@@ -9,7 +9,7 @@ CORS(app)
 
 # Load scispaCy medical model
 try:
-    nlp = spacy.load("en_ner_bc5cdr_md")  # Corrected
+    nlp = spacy.load("en_core_sci_sm")  # Updated model
 except Exception as e:
     print(f"Error loading scispaCy model: {e}")
     nlp = None  # Handle missing model case
@@ -28,18 +28,18 @@ def extract_medical_details(transcript):
         return {"error": "Medical NLP model not loaded"}
     
     doc = nlp(transcript)
-    entities = {"Diseases": [], "Chemicals": []}
+    entities = {"Diseases": [], "Medications": []}
 
     for ent in doc.ents:
-        if ent.label_ == "DISEASE":
+        if ent.label_.lower() in ["disease", "disorder"]:
             entities["Diseases"].append(ent.text)
-        elif ent.label_ == "CHEMICAL":
-            entities["Chemicals"].append(ent.text)
+        elif ent.label_.lower() in ["drug", "medication"]:
+            entities["Medications"].append(ent.text)
 
     return {
         "Patient_Name": "Unknown",
         "Diseases": list(set(entities["Diseases"])),
-        "Medications": list(set(entities["Chemicals"])),
+        "Medications": list(set(entities["Medications"])),
         "Current_Status": "Stable",
         "Prognosis": "Follow-up recommended"
     }
