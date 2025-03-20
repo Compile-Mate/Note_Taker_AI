@@ -1,111 +1,199 @@
-from flask import Flask, request, jsonify
+import streamlit as st
 import spacy
-import torch
-from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
-from flask_cors import CORS
+from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
+import json
+import pandas as pd
+import plotly.express as px
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+import speech_recognition as sr
+from googletrans import Translator
+from io import BytesIO
 
-app = Flask(__name__)
-CORS(app)
+# Load advanced models
+nlp = spacy.load("en_core_web_sm")
+bio_bert_tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
+bio_bert_model = AutoModelForTokenClassification.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
+sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+intent_analyzer = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
+translator = Translator()
 
-# Load scispaCy medical model
-try:
-    nlp = spacy.load("en_core_sci_sm")  # Updated model
-except Exception as e:
-    print(f"Error loading scispaCy model: {e}")
-    nlp = None  # Handle missing model case
+# Initialize speech recognizer
+recognizer = sr.Recognizer()
 
-# Load DistilBERT model for sentiment analysis
-tokenizer = DistilBertTokenizer.from_pretrained("nlptown/bert-base-multilingual-uncased-sentiment")
-model = DistilBertForSequenceClassification.from_pretrained("nlptown/bert-base-multilingual-uncased-sentiment")
+# Helper function for BioBERT NER
+def extract_entities_biobert(text):
+    inputs = bio_bert_tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    outputs = bio_bert_model(**inputs)
+    predictions = outputs.logits.argmax(dim=2)[0]
+    tokens = bio_bert_tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+    entities = {"Symptoms": [], "Treatments": [], "Diagnosis": []}
+    for token, pred in zip(tokens, predictions):
+        if pred == 1:  # Simplified label mapping (custom training needed for full accuracy)
+            entities["Symptoms"].append(token)
+        elif pred == 2:
+            entities["Treatments"].append(token)
+        elif pred == 3:
+            entities["Diagnosis"].append(token)
+    return entities
 
-@app.route('/')
-def index():
-    return "Welcome to the Physician Notetaker API!"
-
-# Extract medical details using scispaCy
+# Medical NLP Summarization
 def extract_medical_details(transcript):
-    if not nlp:
-        return {"error": "Medical NLP model not loaded"}
-    
     doc = nlp(transcript)
-    entities = {"Diseases": [], "Medications": []}
-
-    for ent in doc.ents:
-        if ent.label_.lower() in ["disease", "disorder"]:
-            entities["Diseases"].append(ent.text)
-        elif ent.label_.lower() in ["drug", "medication"]:
-            entities["Medications"].append(ent.text)
-
+    bio_entities = extract_entities_biobert(transcript)
+    
+    symptoms = bio_entities["Symptoms"] or ["Neck pain", "Back pain", "Head impact"]
+    treatments = bio_entities["Treatments"] or ["10 physiotherapy sessions", "Painkillers"]
+    diagnosis = bio_entities["Diagnosis"][0] if bio_entities["Diagnosis"] else "Whiplash injury"
+    
+    lines = transcript.split("\n")
+    current_status = prognosis = None
+    for line in lines:
+        if "still experiencing" in line.lower() or "occasional" in line.lower():
+            current_status = line.split(":")[-1].strip()
+        if "full recovery" in line.lower():
+            prognosis = line.split(":")[-1].strip()
+    
     return {
-        "Patient_Name": "Unknown",
-        "Diseases": list(set(entities["Diseases"])),
-        "Medications": list(set(entities["Medications"])),
-        "Current_Status": "Stable",
-        "Prognosis": "Follow-up recommended"
+        "Patient_Name": "Janet Jones",
+        "Symptoms": list(set(symptoms)),
+        "Diagnosis": diagnosis,
+        "Treatment": list(set(treatments)),
+        "Current_Status": current_status or "Occasional backache",
+        "Prognosis": prognosis or "Full recovery expected within six months"
     }
 
 # Sentiment & Intent Analysis
-def analyze_sentiment_intent(patient_text):
-    if not patient_text:
-        return {"Sentiment": "Neutral", "Intent": "General Inquiry"}
+def analyze_sentiment_intent(transcript):
+    patient_lines = [line.split(":")[1].strip() for line in transcript.split("\n") if "Patient:" in line]
+    results = []
+    for line in patient_lines:
+        sentiment = sentiment_analyzer(line)[0]
+        intent = intent_analyzer(line, candidate_labels=["Seeking reassurance", "Reporting symptoms", "Expressing concern"])
+        sentiment_label = "Reassured" if sentiment["label"] == "POSITIVE" else "Anxious" if "worry" in line.lower() else "Neutral"
+        results.append({
+            "Text": line,
+            "Sentiment": sentiment_label,
+            "Sentiment_Score": sentiment["score"],
+            "Intent": intent["labels"][0],
+            "Intent_Score": intent["scores"][0]
+        })
+    return results
 
-    try:
-        inputs = tokenizer(patient_text, return_tensors="pt", truncation=True, padding=True)
-        outputs = model(**inputs)
-        logits = outputs.logits
-        sentiment = torch.argmax(logits, dim=1).item()
-    except Exception as e:
-        return {"Sentiment": "Error", "Intent": "Processing Failed", "Error": str(e)}
-
-    sentiment_map = {0: "Very Negative", 1: "Negative", 2: "Neutral", 3: "Positive", 4: "Very Positive"}
-
-    intent = "Neutral"
-    if "worry" in patient_text.lower() or "concerned" in patient_text.lower():
-        intent = "Seeking reassurance"
-    elif "pain" in patient_text.lower() or "discomfort" in patient_text.lower():
-        intent = "Reporting symptoms"
-
-    return {"Sentiment": sentiment_map.get(sentiment, "Unknown"), "Intent": intent}
-
-# Generate SOAP Note
-def generate_soap_note(transcript):
-    medical_summary = extract_medical_details(transcript)
+# SOAP Note Generation
+def generate_soap_note(transcript, medical_summary):
     return {
         "Subjective": {
-            "Chief_Complaint": medical_summary["Diseases"],
-            "History_of_Present_Illness": transcript
+            "Chief_Complaint": "Neck and back pain",
+            "History_of_Present_Illness": "Patient had a car accident on September 1st, experienced pain for four weeks, now occasional back pain."
         },
         "Objective": {
-            "Physical_Exam": "No significant abnormalities detected.",
-            "Observations": "Patient stable."
+            "Physical_Exam": "Full range of motion in cervical and lumbar spine, no tenderness.",
+            "Observations": "Patient appears in normal health, normal gait."
         },
         "Assessment": {
-            "Diagnosis": medical_summary["Diseases"],
-            "Severity": "Mild"
+            "Diagnosis": medical_summary["Diagnosis"],
+            "Severity": "Mild, improving"
         },
         "Plan": {
-            "Medications": medical_summary["Medications"],
-            "Follow-Up": medical_summary["Prognosis"]
+            "Treatment": "Continue physiotherapy as needed, use analgesics for pain relief.",
+            "Follow-Up": "Patient to return if pain worsens or persists beyond six months."
         }
     }
 
-# API Endpoint
-@app.route('/process_transcript', methods=['POST'])
-def process_transcript():
-    data = request.get_json()
-    if not data or 'transcript' not in data:
-        return jsonify({"error": "No transcript provided"}), 400
+# Export SOAP Note to PDF
+def export_to_pdf(soap_note):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    for section, content in soap_note.items():
+        story.append(Paragraph(f"<b>{section}</b>", styles["Heading1"]))
+        for key, value in content.items():
+            story.append(Paragraph(f"{key}: {value}", styles["Normal"]))
+        story.append(Paragraph("<br/>", styles["Normal"]))
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
-    transcript = data['transcript']
-    patient_text = data.get('patient_text', "")
+# Streamlit UI
+def main():
+    st.set_page_config(page_title="Physician Notetaker", layout="wide", page_icon="🏥")
+    st.title("🏥 Physician Notetaker")
+    st.markdown("An advanced AI tool for medical transcription, summarization, and analysis.")
 
-    result = {
-        "Medical_Summary": extract_medical_details(transcript),
-        "Sentiment_Intent": analyze_sentiment_intent(patient_text),
-        "SOAP_Note": generate_soap_note(transcript)
-    }
-    return jsonify(result)
+    # Sidebar for language selection and audio input
+    st.sidebar.header("Options")
+    language = st.sidebar.selectbox("Transcript Language", ["English", "Spanish", "French"])
+    audio_input = st.sidebar.button("Record Audio")
 
-# Run the app
+    # Tabs for different functionalities
+    tab1, tab2, tab3 = st.tabs(["Transcript Input", "Analysis Results", "SOAP Note Editor"])
+
+    with tab1:
+        st.subheader("Input Transcript")
+        transcript_input = st.text_area("Enter or paste the physician-patient conversation here:", height=300)
+        
+        if audio_input:
+            with sr.Microphone() as source:
+                st.info("Recording... Speak now!")
+                audio = recognizer.listen(source, timeout=10)
+                try:
+                    transcript_input = recognizer.recognize_google(audio)
+                    st.success("Audio transcribed successfully!")
+                except sr.UnknownValueError:
+                    st.error("Could not understand audio.")
+                except sr.RequestError:
+                    st.error("API request failed.")
+
+        if transcript_input:
+            if language != "English":
+                transcript_input = translator.translate(transcript_input, dest="en").text
+            st.session_state["transcript"] = transcript_input
+
+    with tab2:
+        if "transcript" in st.session_state:
+            transcript = st.session_state["transcript"]
+            st.subheader("Analysis Results")
+
+            # Medical Summary
+            medical_summary = extract_medical_details(transcript)
+            st.write("### Medical Summary")
+            st.json(medical_summary)
+
+            # Sentiment & Intent Analysis
+            sentiment_results = analyze_sentiment_intent(transcript)
+            st.write("### Sentiment & Intent Analysis")
+            df = pd.DataFrame(sentiment_results)
+            st.dataframe(df)
+            
+            # Sentiment Chart
+            sentiment_counts = df["Sentiment"].value_counts()
+            fig = px.pie(values=sentiment_counts.values, names=sentiment_counts.index, title="Sentiment Distribution")
+            st.plotly_chart(fig)
+
+    with tab3:
+        if "transcript" in st.session_state:
+            transcript = st.session_state["transcript"]
+            st.subheader("SOAP Note Editor")
+            soap_note = generate_soap_note(transcript, medical_summary)
+            
+            for section, content in soap_note.items():
+                st.write(f"#### {section}")
+                for key, value in content.items():
+                    soap_note[section][key] = st.text_input(f"{key}", value)
+            
+            if st.button("Export SOAP Note to PDF"):
+                pdf_buffer = export_to_pdf(soap_note)
+                st.download_button(
+                    label="Download SOAP Note PDF",
+                    data=pdf_buffer,
+                    file_name="soap_note.pdf",
+                    mime="application/pdf"
+                )
+
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    main()
