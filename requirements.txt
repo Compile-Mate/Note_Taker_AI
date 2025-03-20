@@ -1,8 +1,10 @@
+# Base dependencies
 flask
+flask-cors
+spacy
 torch
 transformers
 scispacy
-spacy
-en_core_sci_sm
-distilbert-base-uncased
-flask-cors
+
+# Specific model dependencies
+https://github.com/allenai/scispacy/releases/download/v0.5.3/en_core_sci_md-0.5.3.tar.gz
