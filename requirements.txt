@@ -1,0 +1,7 @@
+Flask
+Flask-Cors
+torch
+transformers
+spacy
+scispacy
+en_ner_bc5cdr_md @ https://github.com/allenai/scispacy/releases/download/v0.5.4/en_ner_bc5cdr_md-0.5.4.tar.gz
