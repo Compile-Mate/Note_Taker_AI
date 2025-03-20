@@ -1,6 +1,6 @@
 import streamlit as st
 import spacy
-from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
+from transformers import pipeline
 import json
 import pandas as pd
 import plotly.express as px
@@ -10,58 +10,41 @@ from reportlab.lib.styles import getSampleStyleSheet
 import speech_recognition as sr
 from googletrans import Translator
 from io import BytesIO
-import subprocess
-import sys
 
-# Function to install SpaCy model if not present
-def ensure_spacy_model(model_name="en_core_web_sm"):
-    try:
-        return spacy.load(model_name)
-    except OSError:
-        st.warning(f"Model '{model_name}' not found. Downloading now...")
-        subprocess.check_call([sys.executable, "-m", "spacy", "download", model_name])
-        return spacy.load(model_name)
-
-# Load advanced models with error handling
-nlp = ensure_spacy_model("en_core_web_sm")
+# Load SpaCy model (assumes it's pre-installed)
 try:
-    bio_bert_tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
-    bio_bert_model = AutoModelForTokenClassification.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
-except Exception as e:
-    st.error(f"Error loading BioBERT: {e}")
-    bio_bert_tokenizer, bio_bert_model = None, None
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    st.error("SpaCy model 'en_core_web_sm' is missing. Please ensure it's installed in the environment.")
+    nlp = None
 
+# Load lightweight transformer models
 sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 intent_analyzer = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
 translator = Translator()
 recognizer = sr.Recognizer()
 
-# Helper function for BioBERT NER (with fallback)
-def extract_entities_biobert(text):
-    if bio_bert_tokenizer is None or bio_bert_model is None:
+# Fallback NER without BioBERT (using SpaCy only)
+def extract_entities(transcript):
+    if nlp is None:
         return {"Symptoms": ["Neck pain", "Back pain"], "Treatments": ["Physiotherapy"], "Diagnosis": ["Whiplash"]}
-    inputs = bio_bert_tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    outputs = bio_bert_model(**inputs)
-    predictions = outputs.logits.argmax(dim=2)[0]
-    tokens = bio_bert_tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+    doc = nlp(transcript)
     entities = {"Symptoms": [], "Treatments": [], "Diagnosis": []}
-    for token, pred in zip(tokens, predictions):
-        if pred == 1:  # Simplified (requires fine-tuning for accuracy)
-            entities["Symptoms"].append(token)
-        elif pred == 2:
-            entities["Treatments"].append(token)
-        elif pred == 3:
-            entities["Diagnosis"].append(token)
+    for ent in doc.ents:
+        if ent.label_ in ["DISEASE", "PROBLEM", "SYMPTOM"] or "pain" in ent.text.lower():
+            entities["Symptoms"].append(ent.text)
+        elif ent.label_ in ["TREATMENT", "MEDICINE"]:
+            entities["Treatments"].append(ent.text)
+        elif ent.label_ == "DIAGNOSIS":
+            entities["Diagnosis"].append(ent.text)
     return entities
 
 # Medical NLP Summarization
 def extract_medical_details(transcript):
-    doc = nlp(transcript)
-    bio_entities = extract_entities_biobert(transcript)
-    
-    symptoms = bio_entities["Symptoms"] or ["Neck pain", "Back pain", "Head impact"]
-    treatments = bio_entities["Treatments"] or ["10 physiotherapy sessions", "Painkillers"]
-    diagnosis = bio_entities["Diagnosis"][0] if bio_entities["Diagnosis"] else "Whiplash injury"
+    entities = extract_entities(transcript)
+    symptoms = entities["Symptoms"] or ["Neck pain", "Back pain", "Head impact"]
+    treatments = entities["Treatments"] or ["10 physiotherapy sessions", "Painkillers"]
+    diagnosis = entities["Diagnosis"][0] if entities["Diagnosis"] else "Whiplash injury"
     
     lines = transcript.split("\n")
     current_status = prognosis = None
@@ -144,7 +127,7 @@ def main():
     # Sidebar
     st.sidebar.header("Options")
     language = st.sidebar.selectbox("Transcript Language", ["English", "Spanish", "French"])
-    audio_input = st.sidebar.button("Record Audio")
+    audio_input = st.sidebar.button("Record Audio (Local Only)")
 
     # Tabs
     tab1, tab2, tab3 = st.tabs(["Transcript Input", "Analysis Results", "SOAP Note Editor"])
@@ -154,16 +137,13 @@ def main():
         transcript_input = st.text_area("Enter or paste the physician-patient conversation here:", height=300)
         
         if audio_input:
+            st.warning("Audio recording is only available locally, not on Streamlit Cloud.")
             with sr.Microphone() as source:
                 st.info("Recording... Speak now!")
-                audio = recognizer.listen(source, timeout=10)
                 try:
+                    audio = recognizer.listen(source, timeout=10)
                     transcript_input = recognizer.recognize_google(audio)
                     st.success("Audio transcribed successfully!")
-                except sr.UnknownValueError:
-                    st.error("Could not understand audio.")
-                except sr.RequestError:
-                    st.error("API request failed.")
                 except Exception as e:
                     st.error(f"Audio error: {e}")
 
@@ -177,18 +157,15 @@ def main():
             transcript = st.session_state["transcript"]
             st.subheader("Analysis Results")
 
-            # Medical Summary
             medical_summary = extract_medical_details(transcript)
             st.write("### Medical Summary")
             st.json(medical_summary)
 
-            # Sentiment & Intent Analysis
             sentiment_results = analyze_sentiment_intent(transcript)
             st.write("### Sentiment & Intent Analysis")
             df = pd.DataFrame(sentiment_results)
             st.dataframe(df)
             
-            # Sentiment Chart
             sentiment_counts = df["Sentiment"].value_counts()
             fig = px.pie(values=sentiment_counts.values, names=sentiment_counts.index, title="Sentiment Distribution")
             st.plotly_chart(fig)
