@@ -3,5 +3,6 @@ torch
 transformers
 scispacy
 spacy
-en_core_sci_md @ https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/data/en_core_sci_md-0.5.3.tar.gz
+en_core_sci_sm
 distilbert-base-uncased
+flask-cors
