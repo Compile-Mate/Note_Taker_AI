@@ -1,10 +1,9 @@
-# Base dependencies
-flask
-flask-cors
+streamlit
 spacy
-torch
 transformers
-scispacy
-
-# Specific model dependencies
-https://github.com/allenai/scispacy/releases/download/v0.5.3/en_core_sci_md-0.5.3.tar.gz
+torch
+pandas
+plotly
+reportlab
+speechrecognition
+googletrans==3.1.0a0
